@@ -1,24 +1,19 @@
 /**
  * tests/reviews.test.js
  * Integration tests for /api/reviews using supertest + in-memory MongoDB.
- *
- * Install dev dep: npm i -D @jest-community/eslint-plugin-jest mongodb-memory-server
  */
 
 "use strict";
 
-const mongoose          = require("mongoose");
 const { MongoMemoryServer } = require("mongodb-memory-server");
-const request           = require("supertest");
-const app               = require("../server");
+const mongoose = require("mongoose");
 
 let mongod;
 
+// Set MONGODB_URI BEFORE requiring server.js so connectDB() has it available
 beforeAll(async () => {
   mongod = await MongoMemoryServer.create();
   process.env.MONGODB_URI = mongod.getUri();
-  // server.js calls connectDB() on require — reconnect to in-memory instance
-  await mongoose.disconnect();
   await mongoose.connect(process.env.MONGODB_URI);
 });
 
@@ -33,6 +28,10 @@ afterEach(async () => {
     await collections[key].deleteMany({});
   }
 });
+
+// Require app AFTER mongo is connected
+const request = require("supertest");
+const app     = require("../server");
 
 describe("GET /api/health", () => {
   it("returns 200 with status ok", async () => {
