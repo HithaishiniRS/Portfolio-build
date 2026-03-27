@@ -1,0 +1,100 @@
+/**
+ * server.js — Express entry point
+ * Serves the frontend as static files AND the /api routes.
+ */
+
+"use strict";
+require("node:dns/promises").setServers(["1.1.1.1", "8.8.8.8"]);
+require("dotenv").config();
+
+const path    = require("path");
+const express = require("express");
+const helmet  = require("helmet");
+const cors    = require("cors");
+const morgan  = require("morgan");
+const rateLimit = require("express-rate-limit");
+
+const connectDB      = require("./config/db");
+const reviewsRouter  = require("./routes/reviews");
+
+/* ─── App ─────────────────────────────────────────────────────────────────── */
+const app  = express();
+const PORT = process.env.PORT || 5000;
+
+/* ─── Security & Utilities ─────────────────────────────────────────────────── */
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc:  ["'self'"],
+        styleSrc:   ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc:    ["'self'", "https://fonts.gstatic.com"],
+        imgSrc:     ["'self'", "data:"],
+      },
+    },
+  })
+);
+
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      // Allow same-origin requests (origin === undefined) and configured origins
+      if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes("*")) {
+        return cb(null, true);
+      }
+      cb(new Error(`CORS: origin ${origin} not allowed`));
+    },
+    methods: ["GET", "POST"],
+  })
+);
+
+app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
+app.use(express.json({ limit: "16kb" }));
+
+/* ─── Rate limiting — apply only to API routes ─────────────────────────────── */
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,   // 15 minutes
+  max: 60,                     // requests per window per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many requests. Please try again later." },
+});
+
+/* ─── Routes ────────────────────────────────────────────────────────────────── */
+app.use("/api/reviews", apiLimiter, reviewsRouter);
+
+// Health-check (useful for Render + CI smoke tests)
+app.get("/api/health", (_req, res) => res.json({ status: "ok", ts: Date.now() }));
+
+/* ─── Serve static frontend (Render single-service deployment) ─────────────── */
+const FRONTEND = path.join(__dirname, "..", "frontend");
+app.use(express.static(FRONTEND));
+
+// SPA fallback — return index.html for any unknown GET
+app.get("*", (_req, res) => {
+  res.sendFile(path.join(FRONTEND, "index.html"));
+});
+
+/* ─── Global error handler ──────────────────────────────────────────────────── */
+// eslint-disable-next-line no-unused-vars
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  const status = err.status || 500;
+  res.status(status).json({ message: err.message || "Internal server error" });
+});
+
+/* ─── Boot ──────────────────────────────────────────────────────────────────── */
+(async () => {
+  await connectDB();
+  app.listen(PORT, () =>
+    console.log(`🚀  Server running on http://localhost:${PORT}  [${process.env.NODE_ENV || "development"}]`)
+  );
+})();
+
+module.exports = app;   // exported for Jest / supertest
